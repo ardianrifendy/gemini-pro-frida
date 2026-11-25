@@ -1,83 +1,181 @@
-# Google One 套餐注入器 (`gemini-pro-frida`)
+# 🚀 Google One Billing Injector (`gemini-pro-frida`)
 
-在已 root 的 Android 设备/模拟器上注入 Google One，按套餐弹出 Play 收银台。  
-**不会自动点订阅**，确认页留给你自己点。
+Alat otomasi berbasis **Python + Frida** untuk menguji alur *Google Play Billing* pada aplikasi **Google One** di perangkat Android atau emulator (MuMu, LDPlayer, Nox, AVD) yang sudah di-root.
 
-你只需要准备：**Root（`su` 或 `adb root`）+ 已登录 Google + 已安装 Google One**。  
-`frida-server`、`module_521.apk`、adb 连接由 `main.py` 自动补齐。
+> [!NOTE]
+> Skrip ini **tidak pernah menekan tombol Subscribe / Bayar secara otomatis**. Eksekusi selalu berhenti di layar konfirmasi pembayaran Google Play agar pengguna mengonfirmasi secara manual.
 
-## 运行
+---
 
+## ✨ Fitur Utama
+
+- **Deteksi Lingkungan Otomatis** — Mencari `adb`, menghubungkan port emulator umum (`7555`, `16384`, `5555`, dll.), menyinkronkan `frida-server` sesuai ABI, dan menyuntikkan `module_521.apk` (`BillingClient 5.2.1`).
+- **Dukungan Root Ganda (`su` & `adb root`)** — Berjalan di perangkat dengan `su` klasik maupun emulator Android 15 seperti **MuMu Player** (`adb root` + `setsid`).
+- **Auto-Remove Pasca-Pembayaran** — Memantau callback `onPurchasesUpdated` (`purchase_cb code=0`) dan otomatis menghapus akun Google via `AccountManagerService` setelah pembayaran sukses.
+- **Mode Loop Multi-Akun (`--loop`)** — Memproses beberapa akun Google secara berurutan:
+  - Jika akun terdeteksi sudah berlangganan (`library.db` atau live `queryPurchasesAsync`), akun langsung dihapus dan lanjut ke akun berikutnya.
+  - Jika belum berlangganan, memunculkan layar checkout, menunggu pembayaran sukses, menghapus akun, lalu lanjut ke akun selanjutnya.
+- **Audit Offer Tanpa Checkout (`--check-offers`)** — Mengecek ketersediaan SKU, `offerId`, dan harga dari Play Store dalam satu tabel ringkas tanpa memunculkan popup pembayaran.
+- **Structured Audit Log (`--log-file`)** — Menyimpan log per langkah dalam format **JSONL** untuk keperluan QA dan pelacakan hasil.
+
+---
+
+## 🔄 Alur Kerja Mode Loop (`--loop`)
+
+```mermaid
+flowchart TD
+    A["Mulai (--loop)"] --> B["Ambil daftar akun Google (dumpsys account)"]
+    B --> C{"Masih ada akun?"}
+    C -- Tidak --> Z["Selesai"]
+    C -- Ya --> D["Ambil akun #1 + tampilkan tabel Pre-flight"]
+    D --> E{"Sudah berlangganan?\n(library.db / checkSubs)"}
+    E -- Ya --> H["Hapus akun #1 & force-stop Play Store / Google One"]
+    E -- Tidak --> F["Buka checkout paket target (launchBillingFlow)"]
+    F --> G{"Pembayaran sukses?\n(purchase_cb code=0)"}
+    G -- Ya --> H
+    G -- Batal / Gagal / Timeout --> I{"Pilih aksi:\n[r] Hapus & lanjut\n[q] Berhenti"}
+    I -- r --> H
+    I -- q --> Z
+    H --> B
+```
+
+---
+
+## ⚡ Quick Start
+
+### 1. Prasyarat
+- **PC**: Python 3.10+ dan `adb` (Android SDK Platform-Tools atau bawaan emulator).
+- **Perangkat / Emulator Android**:
+  1. **Root aktif** (`su` atau **Root permission** di MuMu Settings).
+  2. Minimal 1 **akun Google** sudah login.
+  3. Aplikasi **Google One** (`com.google.android.apps.subscriptions.red`) terinstal dari Play Store.
+
+### 2. Instalasi
 ```powershell
+git clone https://github.com/ardianrifendy/gemini-pro-frida.git
+cd gemini-pro-frida
 python -m pip install -r requirements.txt
+```
+
+*(Disarankan memakai `frida==17.9.1` dan `frida-tools==14.8.1` jika Anda memakai binary cache lokal `frida-server-17.9.1`; jika tidak ada di `assets/`, skrip otomatis mengunduh `frida-server` yang cocok dari rilis GitHub Frida.)*
+
+### 3. Jalankan
+```powershell
+# Mode menu interaktif
 python main.py
+
+# Langsung buka checkout pro_12m (tunggu bayar -> auto-remove akun)
+python main.py --plan pro_12m
+
+# Loop otomatis untuk semua akun yang sudah login di perangkat
+python main.py --plan pro_12m --loop
+
+# Audit ketersediaan offer & harga semua paket tanpa membuka checkout
+python main.py --check-offers
 ```
 
-常用 CLI 参数：
+---
 
-```text
-python main.py --plan pro_12m                        # 直接新购并等待支付后自动移除账号
-python main.py --plan pro_12m --loop                 # 按顺序循环处理设备上全部 Google 账号
-python main.py --plan pro_12m --no-auto-remove       # 仅弹出收银台，不等待/不删号
-python main.py --renew --plan pro_6m                 # 续费叠加（STACK=true）
-python main.py --check-offers                        # 检查所有套餐 Offer 可用性与价格（不弹窗）
-python main.py --plan pro_12m --log-file audit.jsonl # 输出结构化 JSONL 审计日志
-python main.py --remove-accounts                     # 立即移除当前设备上的所有 Google 账号
-python main.py --serial emulator-5554                # 指定设备（一般不用）
+## 🛠️ Referensi Lengkap
+
+<details>
+<summary><b>📋 Opsi Command Line (CLI Flags)</b> — klik untuk buka</summary>
+
+| Flag | Default | Fungsi |
+|---|---|---|
+| `-s`, `--serial` | Auto | Menentukan serial ADB perangkat target (mis. `emulator-5554`) |
+| `--plan <id/nomor>` | - | Langsung menjalankan paket tertentu tanpa masuk ke menu |
+| `--stack`, `--renew` | `false` | Mode perpanjangan/stacking (`ReplacementMode = 5`) ke langganan aktif |
+| `--addon <id>` | - | Menggabungkan add-on YouTube (`yt_1m`, `yt_family`, `yt_lite`) |
+| `--loop` | `false` | Memproses semua akun Google yang login di perangkat secara berurutan |
+| `--check-offers` | `false` | Mengecek ketersediaan semua SKU/offer dan harganya tanpa checkout |
+| `--log-file <path>` | - | Menulis log terstruktur ke file `.jsonl` |
+| `--wait-payment <detik>` | `300.0` | Batas waktu menunggu konfirmasi pembayaran user |
+| `--no-auto-remove` | `false` | Tidak menunggu bayar dan tidak menghapus akun otomatis |
+| `--wait <detik>` | `8.0` | Lama tunggu setelah `buy` saat `--no-auto-remove` digunakan |
+| `--remove-accounts` | `false` | Langsung menghapus seluruh akun `com.google` di perangkat lalu keluar |
+
+Contoh lanjutan:
+```powershell
+# Renew / stacking di atas langganan yang sudah ada
+python main.py --renew --plan pro_6m
+
+# Simpan log audit ke file JSONL saat menjalankan loop
+python main.py --plan pro_12m --loop --log-file audit.jsonl
+
+# Hanya buka checkout tanpa auto-remove
+python main.py --plan pro_12m --no-auto-remove
+
+# Hapus semua akun Google di emulator saat ini
+python main.py --remove-accounts
 ```
 
-## 菜单
+</details>
 
-套餐定义在 `plans.json`，按 **Plus / Pro / Ultra 5x / Ultra 20x** 分组。
+<details>
+<summary><b>🎮 Panduan Tombol Menu Interaktif</b> — klik untuk buka</summary>
 
-| 输入 | 作用 |
-|------|------|
-| 编号或套餐名 | 下单，弹出收银台 |
-| `s` | 切换续费叠加（`STACK`） |
-| `a` | 附加 YouTube 套餐 |
-| `r` | 切换支付成功后自动移除 Google 账号 |
-| `p` | 循环处理设备上所有 Google 账号（已订阅直接删号跳下一个） |
-| `o` | 检查所有套餐 Offer 可用性与价格 |
-| `x` | 立即移除当前设备上的 Google 账号 |
-| `e` | 再跑一遍环境检测 |
-| `g` | 重启 Google One 并重新注入 |
-| `q` | 退出 |
+| Input | Aksi |
+|---|---|
+| `1`–`28` atau nama paket | Memicu layar checkout Play Store untuk paket tersebut |
+| `s` | Toggle mode **Pembelian Baru** (`STACK=false`) ↔ **Renew/Stacking** (`STACK=true`) |
+| `a` | Memilih add-on YouTube Premium (`yt_1m`, `yt_family`, `yt_lite`) |
+| `r` | Toggle **Auto-Remove akun** setelah pembayaran sukses |
+| `p` | Memulai mode **Loop** untuk semua akun Google di perangkat |
+| `o` | Menjalankan **Offer Audit** (`--check-offers`) dari dalam menu |
+| `x` | Menghapus seluruh akun Google yang sedang login sekarang juga |
+| `e` | Menjalankan ulang pengecekan environment & perangkat |
+| `g` | Me-restart aplikasi Google One dan menyuntikkan ulang Frida |
+| `l` | Menampilkan ulang daftar menu paket |
+| `q` | Keluar dari program |
 
-## 新购和续费
+</details>
 
-`frida.js`：
+<details>
+<summary><b>📦 Daftar 28 Paket (<code>plans.json</code>)</b> — klik untuk buka</summary>
 
-```js
-var STACK = false; // 新购
-var STACK = true;  // 续费：叠到现有 Google One 订阅上（ReplacementMode = 5）
-```
+Katalog dikelola terpusat di [plans.json](plans.json) dan otomatis disinkronkan ke `frida.js`:
 
-默认新购。菜单按 `s`，或命令行加 `--renew`。续费要求当前账号已经有一笔可叠加的订阅。
+- **Plus (12 paket)**:
+  - Trial gratis (`g1.play.helium`): `helium_12m`, `helium_6m`, `helium_3m`, `helium_1m`
+  - Trial gratis (`g1.2tb.*`): `plus_6m`, `plus_3m`, `plus_2tb_6m`
+  - Intro price: `helium_3m_75`, `plus_2tb_85`
+  - YouTube add-on: `yt_1m`, `yt_family`, `yt_lite`
+- **Pro (8 paket)**:
+  - Pro 5TB trial: `pro_12m`, `pro_6m`, `pro_6m_2`, `pro_6m_ss`, `pro_play_3m`
+  - Pro 5TB / 10TB intro price: `pro_3m_75`, `pro10_1m_90`, `pro10_3m_85`
+- **Ultra 5x – 20TB (3 paket)**: `ultra20_3m_90`, `ultra20_3m_80`, `ultra20_3m_75`
+- **Ultra 20x – 30TB (5 paket)**: `ultra_1m_90`, `ultra_3m_90`, `ultra_3m_80`, `ultra_1m_75`, `ultra_3m_75`
 
-## 脚本会自动做的事
+</details>
 
-1. 查找 adb（PATH / Android SDK / 各盘符下的 MuMu 安装目录）
-2. 没有设备时重启 adb，并尝试连接 MuMu / 雷电 / 夜神常用端口
-3. 多设备去重，优先选已 root、已装 Google One、已登录的那台
-4. 兼容传统 `su` 与 Android 15 模拟器（如 MuMu 6.0 / `adb root`）
-5. 本机没有 Frida 则 `pip install frida-tools`
-6. 缺少 `/data/local/tmp/module_521.apk` 时从 `module_b64.py` 解开并 push
-7. 设备 `frida-server` 缺失或版本和本机不一致时，从 `assets/` 或 GitHub 补齐并启动
-8. 支持在支付成功回调（`purchase_cb code=0`）后通过 `AccountManagerService` 自动移除该 Google 账号
+<details>
+<summary><b>📂 Struktur File Proyek</b> — klik untuk buka</summary>
 
-## 文件
+| File / Folder | Deskripsi |
+|---|---|
+| `main.py` | Entrypoint CLI, deteksi ADB/device, manajemen sesi Frida, loop, dan auto-remove akun |
+| `frida.js` | Payload Frida untuk inisialisasi `BillingClient`, query offer, check subs, dan `launchBillingFlow` |
+| `plans.json` | Konfigurasi grup dan 28 SKU/offer Google One |
+| `module_b64.py` | Payload base64 `BillingClient 5.2.1` (`module_521.apk`) |
+| `tests/test_main.py` | Unit test (`unittest`) untuk katalog, deduplikasi ADB, pengecekan `library.db`, state sesi, dan audit logger |
+| `requirements.txt` | Dependensi Python (`frida`, `frida-tools`) |
+| `assets/` | Cache lokal binary `frida-server` (diabaikan oleh `.gitignore`) |
 
-| 文件 | 说明 |
-|------|------|
-| `main.py` | 入口：环境、菜单、注入、循环与自动删号 |
-| `frida.js` | Frida 插件，含 BillingClient 与 Offer 审计逻辑 |
-| `plans.json` | 套餐分组与 SKU/Offer 配置 |
-| `module_b64.py` | BillingClient 5.2.1 dex |
-| `tests/test_main.py` | 单元测试 |
-| `requirements.txt` | Python 依赖 |
-| `assets/` | 本地缓存的 `frida-server`（已忽略，不提交到 Git） |
+</details>
 
-## 测试
+<details>
+<summary><b>❓ Troubleshooting Cepat</b> — klik untuk buka</summary>
+
+- **Root tidak terdeteksi di MuMu Android 15**: Pastikan **Root permission** aktif di Settings MuMu lalu restart emulator; `main.py` otomatis memakai `adb root` jika binary `su` tidak tersedia di shell.
+- **Layar checkout tidak muncul / salah akun saat banyak akun login**: Gunakan `--loop` atau pastikan hanya akun target yang aktif di Play Store (`main.py` akan me-*force-stop* Play Store & Google One setiap kali akun dihapus di mode loop).
+- **Mode `--renew` gagal (`no_purchase`)**: Akun yang sedang aktif belum memiliki langganan Google One yang bisa di-*stack*; jalankan tanpa `--renew` untuk pembelian baru.
+
+</details>
+
+---
+
+## 🧪 Pengujian
 
 ```powershell
 python -m unittest discover -s tests -v
