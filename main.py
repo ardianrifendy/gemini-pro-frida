@@ -61,10 +61,10 @@ GROUPS = [
         "pro10_1m_90", "pro10_3m_85",
     ]),
     ("Ultra 5x", [
-        "ultra20_3m_90", "ultra20_3m_80", "ultra20_3m_75",
+        "ultra20_1m_eft", "ultra20_3m_90", "ultra20_3m_80", "ultra20_3m_75",
     ]),
     ("Ultra 20x", [
-        "ultra_1m_90", "ultra_3m_90", "ultra_3m_80", "ultra_1m_75", "ultra_3m_75",
+        "ultra_1m_eft", "ultra_1m_90", "ultra_1m_75", "ultra_3m_90", "ultra_3m_80", "ultra_3m_75",
     ]),
 ]
 

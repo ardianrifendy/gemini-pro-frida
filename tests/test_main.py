@@ -10,10 +10,13 @@ import main
 class TestCatalogAndPlans(unittest.TestCase):
     def test_load_catalog_from_plans_json(self):
         plans, groups = main.load_catalog()
-        self.assertEqual(len(plans), 28)
+        self.assertEqual(len(plans), 30)
         self.assertIn("pro_12m", plans)
         self.assertEqual(plans["pro_12m"]["sku"], "g1.2tb.ai.subs_variant")
         self.assertEqual(plans["pro_12m"]["offer"], "12months-eft")
+        self.assertIn("ultra_1m_eft", plans)
+        self.assertEqual(plans["ultra_1m_eft"]["sku"], "g1.ai.ultra.1month_eft.acq")
+        self.assertEqual(plans["ultra_1m_eft"]["fallback"][:2], ["ultra_1m_90", "ultra_3m_90"])
         self.assertEqual([title for title, _ in groups], ["Plus", "Pro", "Ultra 5x", "Ultra 20x"])
 
     def test_parse_plans_fallback_matches_json(self):
