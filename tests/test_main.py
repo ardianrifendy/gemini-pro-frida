@@ -30,6 +30,18 @@ class TestCatalogAndPlans(unittest.TestCase):
         self.assertEqual(main.resolve_plan("1", plans, index), "helium_12m")
         self.assertEqual(main.resolve_plan("nonexistent", plans, index), "")
 
+    def test_resolve_plan_chain(self):
+        plans, groups = main.load_catalog()
+        grouped = main.grouped_plans(plans, groups_cfg=groups)
+        index = {str(i): pid for i, (_t, pid, _s) in enumerate(main.flatten_menu(grouped), 1)}
+        index.update({pid: pid for pid in plans})
+        chain, bad = main.resolve_plan_chain("pro_12m, 15, pro_6m", plans, index)
+        self.assertEqual(bad, "")
+        self.assertEqual(chain, ["pro_12m", "pro_6m_2", "pro_6m"])
+        chain2, bad2 = main.resolve_plan_chain("pro_12m, invalid_sku", plans, index)
+        self.assertEqual(chain2, [])
+        self.assertEqual(bad2, "invalid_sku")
+
 
 class TestAdbHelpers(unittest.TestCase):
     def test_dedupe_prefers_emulator_serial(self):

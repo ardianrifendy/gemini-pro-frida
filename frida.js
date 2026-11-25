@@ -43,6 +43,7 @@ var dexLoader = null;
 var ctxRef = null;
 var clientRef = null;
 var booted = false;
+var lastPurchaseToken = "";
 var held = [];
 var clsSeq = 0;
 function hold(x) { held.push(x); return x; }
@@ -185,7 +186,15 @@ function connectThen(fn) {
     implements: [PUL],
     methods: {
       onPurchasesUpdated: function (r, p) {
-        log("purchase_cb", { code: r.getResponseCode(), msg: String(r.getDebugMessage() || ""), n: p ? p.size() : 0 });
+        var code = r.getResponseCode();
+        if (code === 0 && p && p.size() > 0) {
+          try {
+            L(dexLoader);
+            var freshTok = pickOldToken(p);
+            if (freshTok) lastPurchaseToken = freshTok;
+          } catch (ep) {}
+        }
+        log("purchase_cb", { code: code, msg: String(r.getDebugMessage() || ""), n: p ? p.size() : 0 });
       }
     }
   });
@@ -382,9 +391,15 @@ function queryPurchasesAsyncList(cb) {
 function queryPurchasesThen(cb) {
   L(dexLoader);
   var dbTok = tokenFromPlayDb();
-  if (dbTok) { cb(dbTok); return; }
+  if (dbTok) {
+    lastPurchaseToken = dbTok;
+    cb(dbTok);
+    return;
+  }
   queryPurchasesAsyncList(function (_code, list2) {
-    cb(pickOldToken(list2));
+    var tok = pickOldToken(list2) || lastPurchaseToken;
+    if (tok) lastPurchaseToken = tok;
+    cb(tok);
   });
 }
 

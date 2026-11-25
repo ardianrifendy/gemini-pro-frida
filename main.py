@@ -330,6 +330,7 @@ def print_menu(plans, stack, addon, auto_remove=True, groups_cfg=GROUPS):
     print()
     print("  输入编号或套餐名下单")
     print("  s  切换续费叠加（需要设备上已有 Google One 订阅）")
+    print("  t  连环叠加 / Tumpuk Payment（同一账号按顺序购买并叠加多个套餐）")
     print("  a  设置 YouTube 附加套餐")
     print("  r  切换支付成功后自动移除 Google 账号")
     print("  p  循环处理设备上所有 Google 账号（已订阅则删号跳下一个）")
@@ -1122,6 +1123,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="Google One 套餐注入")
     p.add_argument("-s", "--serial", default=os.environ.get("ANDROID_SERIAL") or "")
     p.add_argument("--plan", default="", help="直接下单套餐名或菜单编号，不进交互")
+    p.add_argument("--stack-plans", default="",
+                   help="连环叠加/tumpuk 套餐列表（逗号分隔），如 pro_12m,pro_6m_2,pro_6m")
     p.add_argument("--stack", "--renew", action="store_true",
                    help="续费叠加：在现有 Google One 订阅上叠加（frida.js STACK=true）")
     p.add_argument("--addon", default="", help="附加套餐 id，例如 yt_1m")
@@ -1149,6 +1152,18 @@ def resolve_plan(raw, plans, index=None):
     if index and raw in index:
         return index[raw]
     return ""
+
+
+def resolve_plan_chain(raw_list, plans, index=None):
+    """Parse a comma-separated list of plan IDs/menu numbers into validated plan IDs."""
+    items = [part.strip() for part in (raw_list or "").split(",") if part.strip()]
+    resolved = []
+    for item in items:
+        pid = resolve_plan(item, plans, index) or resolve_plan(item.lower(), plans, index)
+        if not pid:
+            return [], item
+        resolved.append(pid)
+    return resolved, ""
 
 
 def main():
@@ -1228,15 +1243,59 @@ def main():
             print(f"  {i:<3} {email:<34} {country:<8} {sub_flag}")
         print("-" * 64)
 
-    def run_loop(plan_id, initial_sess=None):
-        spec = plans[plan_id]
+    def run_stack_chain(sess, plan_ids, account, initial_has_sub=None):
+        """Execute a sequence of plans on one account: first as new (if unsubscribed), then stack (mode=5)."""
+        has_sub = initial_has_sub
+        if has_sub is None:
+            has_sub = db_has_g1_sub(account) or sess.check_subs()
+        paid_count = 0
+        total_steps = len(plan_ids)
+        for idx, pid_name in enumerate(plan_ids, 1):
+            spec = plans[pid_name]
+            use_stack = bool(stack or has_sub)
+            print()
+            info(f"叠加步骤 [{idx}/{total_steps}] 账号={account}  套餐={pid_name}  模式={'叠加(mode=5)' if use_stack else '首单新购'}")
+            info(spec["note"])
+            sess.buy(pid_name, stack=use_stack, addon=addon)
+            info(f"等待 {account} 完成第 {idx}/{total_steps} 笔支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
+            code = sess.wait_for_purchase(timeout=args.wait_payment)
+            if code == "0":
+                paid_count += 1
+                has_sub = True
+                audit.write(
+                    account=account, plan=pid_name, sku=spec["sku"], offer=spec["offer"],
+                    stack=use_stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
+                    purchase_code=code, step=f"{idx}/{total_steps}", action="stack_step_ok",
+                )
+                time.sleep(1.5)
+                continue
+            warn(f"第 {idx}/{total_steps} 笔 ({pid_name}) 未完成支付 (code={code})")
+            audit.write(
+                account=account, plan=pid_name, sku=spec["sku"], offer=spec["offer"],
+                stack=use_stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
+                purchase_code=code, step=f"{idx}/{total_steps}", action=f"stack_step_stopped_{code}",
+            )
+            if idx < total_steps:
+                try:
+                    ans = input("  [n] 跳过当前套餐继续叠加下一个 / [q] 结束当前账号叠加: ").strip().lower()
+                except EOFError:
+                    ans = "q"
+                if ans == "n":
+                    continue
+            return paid_count, False
+        return paid_count, True
+
+    def run_loop(plan_ids, initial_sess=None):
+        is_chain = len(plan_ids) > 1
+        single_pid = plan_ids[0]
+        spec = plans[single_pid]
         initial = google_accounts()
         total = len(initial)
         if not total:
             warn("设备上没有 Google 账号")
             return initial_sess
         print_preflight(initial)
-        info(f"开始循环处理 {total} 个 Google 账号，套餐: {plan_id}")
+        info(f"开始循环处理 {total} 个 Google 账号，套餐: {', '.join(plan_ids)}")
         sess = initial_sess
         step = 0
         while True:
@@ -1249,44 +1308,59 @@ def main():
             print()
             print("=" * 64)
             info(f"进度 [{step}/{max(total, step)}] 当前账号: {current}  (剩余 {len(accts)} 个)")
-            if not stack and db_has_g1_sub(current):
+            if not is_chain and not stack and db_has_g1_sub(current):
                 warn(f"{current} 在本地记录中已订阅 Google One -> 直接移除并切下一个")
                 if sess:
                     sess.close()
                     sess = None
-                audit.write(account=current, plan=plan_id, sku=spec["sku"], offer=spec["offer"], stack=stack, action="skipped_db_sub_removed")
+                audit.write(account=current, plan=single_pid, sku=spec["sku"], offer=spec["offer"], stack=stack, action="skipped_db_sub_removed")
                 remove_and_advance(None, current)
                 continue
             if sess is None:
                 sess = Session(plans=plans)
                 pid = start_google_one()
                 sess.attach(pid)
-            if not stack and sess.check_subs():
+            if not is_chain and not stack and sess.check_subs():
                 warn(f"{current} 检测到已有 Google One 订阅 -> 直接移除并切下一个")
                 dev = sess.device
                 sess.close()
                 sess = None
-                audit.write(account=current, plan=plan_id, sku=spec["sku"], offer=spec["offer"], stack=stack, action="skipped_live_sub_removed")
+                audit.write(account=current, plan=single_pid, sku=spec["sku"], offer=spec["offer"], stack=stack, action="skipped_live_sub_removed")
                 remove_and_advance(dev, current)
                 continue
-            info(f"{'续费叠加' if stack else '新购'} {plan_id}  sku={spec['sku']}  offer={spec['offer']}")
-            info(spec["note"])
-            sess.buy(plan_id, stack=stack, addon=addon)
-            info(f"等待 {current} 完成支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
-            code = sess.wait_for_purchase(timeout=args.wait_payment)
-            if code == "0":
-                time.sleep(1.5)
-                dev = sess.device
-                audit.write(
-                    account=current, plan=plan_id, sku=spec["sku"], offer=spec["offer"],
-                    stack=stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
-                    purchase_code=code, action="paid_and_removed",
-                )
-                sess.close()
-                sess = None
-                remove_and_advance(dev, current)
-                continue
-            warn(f"{current} 未完成支付 (code={code})，未自动删号")
+            if is_chain:
+                paid_count, finished_chain = run_stack_chain(sess, plan_ids, current)
+                if finished_chain and paid_count > 0:
+                    dev = sess.device
+                    sess.close()
+                    sess = None
+                    if auto_remove:
+                        remove_and_advance(dev, current)
+                    continue
+                if paid_count == 0:
+                    warn(f"{current} 连环叠加未完成任何支付，未自动删号")
+                else:
+                    warn(f"{current} 连环叠加部分完成 ({paid_count}/{len(plan_ids)})，未自动删号")
+            else:
+                info(f"{'续费叠加' if stack else '新购'} {single_pid}  sku={spec['sku']}  offer={spec['offer']}")
+                info(spec["note"])
+                sess.buy(single_pid, stack=stack, addon=addon)
+                info(f"等待 {current} 完成支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
+                code = sess.wait_for_purchase(timeout=args.wait_payment)
+                if code == "0":
+                    time.sleep(1.5)
+                    dev = sess.device
+                    audit.write(
+                        account=current, plan=single_pid, sku=spec["sku"], offer=spec["offer"],
+                        stack=stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
+                        purchase_code=code, action="paid_and_removed",
+                    )
+                    sess.close()
+                    sess = None
+                    if auto_remove:
+                        remove_and_advance(dev, current)
+                    continue
+                warn(f"{current} 未完成支付 (code={code})，未自动删号")
             try:
                 ans = input("  [r] 移除该账号并继续下一个 / [q] 停止循环: ").strip().lower()
             except EOFError:
@@ -1294,18 +1368,18 @@ def main():
             if ans == "r":
                 dev = sess.device
                 audit.write(
-                    account=current, plan=plan_id, sku=spec["sku"], offer=spec["offer"],
+                    account=current, plan=",".join(plan_ids), sku=spec["sku"], offer=spec["offer"],
                     stack=stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
-                    purchase_code=code, action="manual_removed_after_unpaid",
+                    purchase_code=sess.purchase_code, action="manual_removed_after_unpaid",
                 )
                 sess.close()
                 sess = None
                 remove_and_advance(dev, current)
                 continue
             audit.write(
-                account=current, plan=plan_id, sku=spec["sku"], offer=spec["offer"],
+                account=current, plan=",".join(plan_ids), sku=spec["sku"], offer=spec["offer"],
                 stack=stack, pd_code=sess.pd_code, launch_code=sess.launch_code,
-                purchase_code=code, action="loop_stopped",
+                purchase_code=sess.purchase_code, action="loop_stopped",
             )
             break
         return sess
@@ -1319,14 +1393,25 @@ def main():
         sess.close()
         return
 
-    if args.loop:
-        plan_id = resolve_plan(args.plan, plans, index)
-        if not plan_id:
-            fail("--loop 需要配合有效的 --plan 参数使用")
+    stack_chain = []
+    if args.stack_plans:
+        stack_chain, bad_item = resolve_plan_chain(args.stack_plans, plans, index)
+        if not stack_chain:
+            fail(f"--stack-plans 包含无效套餐: {bad_item!r}")
             sys.exit(1)
+
+    if args.loop:
+        if stack_chain:
+            loop_plans = stack_chain
+        else:
+            plan_id = resolve_plan(args.plan, plans, index)
+            if not plan_id:
+                fail("--loop 需要配合有效的 --plan 或 --stack-plans 参数使用")
+                sys.exit(1)
+            loop_plans = [plan_id]
         sess = None
         try:
-            sess = run_loop(plan_id)
+            sess = run_loop(loop_plans)
         except KeyboardInterrupt:
             print()
             warn("循环已中断")
@@ -1338,6 +1423,18 @@ def main():
     sess = Session(plans=plans)
     pid = start_google_one()
     sess.attach(pid)
+
+    if stack_chain:
+        acct = (google_accounts() or [""])[0]
+        try:
+            paid_count, finished_chain = run_stack_chain(sess, stack_chain, acct)
+            if auto_remove and finished_chain and paid_count > 0:
+                remove_and_advance(sess.device, acct)
+        except KeyboardInterrupt:
+            print()
+            warn("已取消连环叠加")
+        sess.close()
+        return
 
     if args.plan:
         plan_id = resolve_plan(args.plan, plans, index)
@@ -1391,16 +1488,40 @@ def main():
                     sess.attach(pid)
                 sess.check_offers(plans)
                 continue
-            if low == "p":
+            if low == "t":
                 try:
-                    raw_plan = input("循环使用的套餐编号或名称 (例如 pro_12m): ").strip()
+                    raw_chain = input("输入要连环叠加的套餐（逗号分隔，例如 pro_12m,pro_6m_2,pro_6m）: ").strip()
                 except EOFError:
                     continue
-                loop_plan = resolve_plan(raw_plan, plans, index) or resolve_plan(raw_plan.lower(), plans, index)
-                if not loop_plan:
-                    warn("无法识别套餐")
+                chain, bad_item = resolve_plan_chain(raw_chain, plans, index)
+                if not chain:
+                    warn(f"无法识别套餐: {bad_item or raw_chain}")
                     continue
-                sess = run_loop(loop_plan, initial_sess=sess)
+                if sess is None:
+                    sess = Session(plans=plans)
+                    pid = start_google_one()
+                    sess.attach(pid)
+                acct = (google_accounts() or [""])[0]
+                try:
+                    paid_count, finished_chain = run_stack_chain(sess, chain, acct)
+                    if auto_remove and finished_chain and paid_count > 0:
+                        remove_and_advance(sess.device, acct)
+                        sess.close()
+                        sess = None
+                except KeyboardInterrupt:
+                    print()
+                    warn("已取消连环叠加，返回菜单")
+                continue
+            if low == "p":
+                try:
+                    raw_plan = input("循环使用的套餐或连环叠加套餐 (例如 pro_12m 或 pro_12m,pro_6m_2): ").strip()
+                except EOFError:
+                    continue
+                loop_plans, bad_item = resolve_plan_chain(raw_plan, plans, index)
+                if not loop_plans:
+                    warn(f"无法识别套餐: {bad_item or raw_plan}")
+                    continue
+                sess = run_loop(loop_plans, initial_sess=sess)
                 if sess is None and google_accounts():
                     sess = Session(plans=plans)
                     pid = start_google_one()

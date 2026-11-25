@@ -85,6 +85,7 @@ python main.py --check-offers
 |---|---|---|
 | `-s`, `--serial` | Auto | Menentukan serial ADB perangkat target (mis. `emulator-5554`) |
 | `--plan <id/nomor>` | - | Langsung menjalankan paket tertentu tanpa masuk ke menu |
+| `--stack-plans <a,b,...>` | - | Rantai tumpuk payment (langkah 1 otomatis *new* jika belum punya sub, langkah 2+ otomatis *stack* `mode=5`) |
 | `--stack`, `--renew` | `false` | Mode perpanjangan/stacking (`ReplacementMode = 5`) ke langganan aktif |
 | `--addon <id>` | - | Menggabungkan add-on YouTube (`yt_1m`, `yt_family`, `yt_lite`) |
 | `--loop` | `false` | Memproses semua akun Google yang login di perangkat secara berurutan |
@@ -119,6 +120,7 @@ python main.py --remove-accounts
 |---|---|
 | `1`–`28` atau nama paket | Memicu layar checkout Play Store untuk paket tersebut |
 | `s` | Toggle mode **Pembelian Baru** (`STACK=false`) ↔ **Renew/Stacking** (`STACK=true`) |
+| `t` | **Tumpuk Payment** berantai pada satu akun (mis. `pro_12m,pro_6m_2,pro_6m`) |
 | `a` | Memilih add-on YouTube Premium (`yt_1m`, `yt_family`, `yt_lite`) |
 | `r` | Toggle **Auto-Remove akun** setelah pembayaran sukses |
 | `p` | Memulai mode **Loop** untuk semua akun Google di perangkat |
