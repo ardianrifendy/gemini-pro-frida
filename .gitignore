@@ -1,0 +1,14 @@
+# Large cached frida-server binaries (>100MB exceeds GitHub limit)
+assets/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Generated audit logs
+*.jsonl
+logs/
