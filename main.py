@@ -307,7 +307,7 @@ def flatten_menu(groups):
     return rows
 
 
-def print_menu(plans, stack, addon, auto_remove=True, groups_cfg=GROUPS):
+def print_menu(plans, stack, addon, auto_remove=False, groups_cfg=GROUPS):
     groups = grouped_plans(plans, groups_cfg=groups_cfg)
     rows = flatten_menu(groups)
     mode = "续费叠加（STACK=true，叠到现有订阅上）" if stack else "新购（STACK=false）"
@@ -1131,8 +1131,8 @@ def parse_args():
     p.add_argument("--wait", type=float, default=8.0, help="关闭自动删号时下单后等待秒数")
     p.add_argument("--wait-payment", type=float, default=300.0,
                    help="等待用户完成支付的超时秒数（默认 300）")
-    p.add_argument("--no-auto-remove", action="store_true",
-                   help="支付成功后不自动移除设备上的 Google 账号")
+    p.add_argument("--auto-remove", action="store_true",
+                   help="支付成功后自动移除设备上的 Google 账号（默认关闭，需手动开启）")
     p.add_argument("--loop", action="store_true",
                    help="按顺序循环处理设备上所有已登录的 Google 账号（已订阅直接删号跳下一个）")
     p.add_argument("--check-offers", action="store_true",
@@ -1189,7 +1189,7 @@ def main():
     audit = AuditLogger(args.log_file)
     stack = bool(args.stack)
     addon = args.addon
-    auto_remove = not bool(args.no_auto_remove)
+    auto_remove = bool(args.auto_remove)
     groups = grouped_plans(plans, groups_cfg=groups_cfg)
     index = {str(i): pid for i, (_t, pid, _s) in enumerate(flatten_menu(groups), 1)}
     index.update({pid: pid for pid in plans})
@@ -1334,8 +1334,7 @@ def main():
                     dev = sess.device
                     sess.close()
                     sess = None
-                    if auto_remove:
-                        remove_and_advance(dev, current)
+                    remove_and_advance(dev, current)
                     continue
                 if paid_count == 0:
                     warn(f"{current} 连环叠加未完成任何支付，未自动删号")
@@ -1357,8 +1356,7 @@ def main():
                     )
                     sess.close()
                     sess = None
-                    if auto_remove:
-                        remove_and_advance(dev, current)
+                    remove_and_advance(dev, current)
                     continue
                 warn(f"{current} 未完成支付 (code={code})，未自动删号")
             try:

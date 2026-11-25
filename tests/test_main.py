@@ -42,6 +42,16 @@ class TestCatalogAndPlans(unittest.TestCase):
         self.assertEqual(chain2, [])
         self.assertEqual(bad2, "invalid_sku")
 
+    def test_default_cli_settings_neutral(self):
+        with mock.patch("sys.argv", ["main.py"]):
+            args = main.parse_args()
+        self.assertEqual(args.plan, "")
+        self.assertEqual(args.stack_plans, "")
+        self.assertFalse(args.stack)
+        self.assertEqual(args.addon, "")
+        self.assertFalse(args.auto_remove)
+        self.assertFalse(args.loop)
+
 
 class TestAdbHelpers(unittest.TestCase):
     def test_dedupe_prefers_emulator_serial(self):

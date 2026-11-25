@@ -64,8 +64,11 @@ python -m pip install -r requirements.txt
 # Mode menu interaktif
 python main.py
 
-# Langsung buka checkout pro_12m (tunggu bayar -> auto-remove akun)
+# Langsung buka checkout pro_12m
 python main.py --plan pro_12m
+
+# Buka checkout + tunggu pembayaran + auto-remove akun
+python main.py --plan pro_12m --auto-remove
 
 # Loop otomatis untuk semua akun yang sudah login di perangkat
 python main.py --plan pro_12m --loop
@@ -92,8 +95,8 @@ python main.py --check-offers
 | `--check-offers` | `false` | Mengecek ketersediaan semua SKU/offer dan harganya tanpa checkout |
 | `--log-file <path>` | - | Menulis log terstruktur ke file `.jsonl` |
 | `--wait-payment <detik>` | `300.0` | Batas waktu menunggu konfirmasi pembayaran user |
-| `--no-auto-remove` | `false` | Tidak menunggu bayar dan tidak menghapus akun otomatis |
-| `--wait <detik>` | `8.0` | Lama tunggu setelah `buy` saat `--no-auto-remove` digunakan |
+| `--auto-remove` | `false` | Otomatis menghapus akun Google setelah pembayaran sukses (`code=0`) |
+| `--wait <detik>` | `8.0` | Lama tunggu setelah `buy` saat mode default (`auto-remove` mati) |
 | `--remove-accounts` | `false` | Langsung menghapus seluruh akun `com.google` di perangkat lalu keluar |
 
 Contoh lanjutan:
@@ -105,7 +108,10 @@ python main.py --renew --plan pro_6m
 python main.py --plan pro_12m --loop --log-file audit.jsonl
 
 # Hanya buka checkout tanpa auto-remove
-python main.py --plan pro_12m --no-auto-remove
+python main.py --plan pro_12m
+
+# Buka checkout lalu auto-remove akun setelah bayar sukses
+python main.py --plan pro_12m --auto-remove
 
 # Hapus semua akun Google di emulator saat ini
 python main.py --remove-accounts
