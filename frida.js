@@ -23,16 +23,19 @@ var PLANS = {
   pro_3m_75:     { sku: "g1.2tb.ai.3months_ip_75p.acq", offer: "introprice", note: "$4.99 Pro 5TB 3个月，之后 $19.99/月" },
   pro10_1m_90:   { sku: "g1.10tb.1month_ip_90p",        offer: "introprice", note: "$4.99 Pro 10TB 1个月，之后 $49.99/月" },
   pro10_3m_85:   { sku: "g1.10tb.3months_ip_85p",       offer: "introprice", note: "$7.49 Pro 10TB 3个月，之后 $49.99/月" },
+  pro10_base:    { sku: "g1.10tb",                      offer: "",           note: "Pro 10TB Play base (full price, no promo)" },
   ultra20_1m_eft:{ sku: "g1.20tb.1month_eft.acq",     offer: "freetrial",  note: "Ultra 5x（20TB）免费1个月，之后 $99.99/月" },
   ultra20_3m_90: { sku: "g1.20tb.3months_ip_90p.acq",   offer: "introprice", note: "$9.99 Ultra 5x（20TB）3个月，之后 $99.99/月" },
   ultra20_3m_80: { sku: "g1.20tb.3months_ip_80p.acq",   offer: "introprice", note: "$19.99 Ultra 5x（20TB）3个月，之后 $99.99/月" },
   ultra20_3m_75: { sku: "g1.20tb.3months_ip_75p.acq",   offer: "introprice", note: "$24.99 Ultra 5x（20TB）3个月，之后 $99.99/月" },
+  ultra20_base:  { sku: "g1.play.20tb",                 offer: "",           note: "Ultra 5x (20TB) Play base (full price, no promo)" },
   ultra_1m_eft:  { sku: "g1.ai.ultra.1month_eft.acq",   offer: "freetrial",  note: "Ultra 20x（30TB）免费1个月，之后 $199.99/月" },
   ultra_1m_90:   { sku: "g1.ai.ultra.1month_ip_90p.acq", offer: "introprice", note: "$19.99 Ultra 20x（30TB）1个月，之后 $199.99/月" },
   ultra_3m_90:   { sku: "g1.ai.ultra.3months_ip_90p.acq", offer: "introprice", note: "$19.99 Ultra 20x（30TB）3个月，之后 $199.99/月" },
   ultra_3m_80:   { sku: "g1.ai.ultra.3months_ip_80p.acq", offer: "introprice", note: "$39.99 Ultra 20x（30TB）3个月，之后 $199.99/月" },
   ultra_1m_75:   { sku: "g1.ai.ultra.1month_ip_75p.acq", offer: "introprice", note: "$49.99 Ultra 20x（30TB）1个月，之后 $199.99/月" },
-  ultra_3m_75:   { sku: "g1.ai.ultra.3months_ip_75p.acq", offer: "introprice", note: "$49.99 Ultra 20x（30TB）3个月，之后 $199.99/月" }
+  ultra_3m_75:   { sku: "g1.ai.ultra.3months_ip_75p.acq", offer: "introprice", note: "$49.99 Ultra 20x（30TB）3个月，之后 $199.99/月" },
+  ultra_30tb:    { sku: "g1.ai.pro",                    offer: "",           note: "Ultra 20x (30TB) Play base (full price, no promo)" }
 };
 
 var STACK_MODE = 5; // CHARGE_FULL_PRICE，叠加必须走这个

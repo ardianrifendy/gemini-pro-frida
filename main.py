@@ -58,13 +58,13 @@ GROUPS = [
     ("Pro", [
         "pro_12m", "pro_6m", "pro_6m_2", "pro_6m_ss", "pro_play_3m",
         "pro_3m_75",
-        "pro10_1m_90", "pro10_3m_85",
+        "pro10_1m_90", "pro10_3m_85", "pro10_base",
     ]),
     ("Ultra 5x", [
-        "ultra20_1m_eft", "ultra20_3m_90", "ultra20_3m_80", "ultra20_3m_75",
+        "ultra20_1m_eft", "ultra20_3m_90", "ultra20_3m_80", "ultra20_3m_75", "ultra20_base",
     ]),
     ("Ultra 20x", [
-        "ultra_1m_eft", "ultra_1m_90", "ultra_1m_75", "ultra_3m_90", "ultra_3m_80", "ultra_3m_75",
+        "ultra_1m_eft", "ultra_1m_90", "ultra_1m_75", "ultra_3m_90", "ultra_3m_80", "ultra_3m_75", "ultra_30tb",
     ]),
 ]
 
@@ -270,7 +270,7 @@ def parse_plans(js_text):
         return {}
     plans = {}
     for m in re.finditer(
-        r"(\w+)\s*:\s*\{\s*sku:\s*\"([^\"]+)\"\s*,\s*offer:\s*\"([^\"]+)\"\s*,\s*note:\s*\"([^\"]*)\"",
+        r"(\w+)\s*:\s*\{\s*sku:\s*\"([^\"]+)\"\s*,\s*offer:\s*\"([^\"]*)\"\s*,\s*note:\s*\"([^\"]*)\"",
         block.group(1),
     ):
         plans[m.group(1)] = {"sku": m.group(2), "offer": m.group(3), "note": m.group(4)}
@@ -1333,7 +1333,8 @@ class Session:
             hit = by_pair.get((spec["sku"], spec["offer"]))
             status = "OK" if hit else "MISS"
             price = hit.get("price", "-") if hit else "-"
-            print(f"  {pid:<16} {status:<8} {price:<24} {spec['sku']} ({spec['offer']})")
+            offer_label = spec["offer"] or "base"
+            print(f"  {pid:<16} {status:<8} {price:<24} {spec['sku']} ({offer_label})")
         print("-" * 76)
         return self.offers_audit
 

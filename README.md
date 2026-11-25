@@ -145,7 +145,7 @@ python main.py --remove-accounts
 </details>
 
 <details>
-<summary><b>📦 Daftar 30 Paket (<code>plans.json</code>)</b> — klik untuk buka</summary>
+<summary><b>📦 Daftar 33 Paket (<code>plans.json</code>)</b> — klik untuk buka</summary>
 
 Katalog dikelola terpusat di [plans.json](plans.json) dan otomatis disinkronkan ke `frida.js`:
 
@@ -154,11 +154,11 @@ Katalog dikelola terpusat di [plans.json](plans.json) dan otomatis disinkronkan 
   - Trial gratis (`g1.2tb.*`): `plus_6m`, `plus_3m`, `plus_2tb_6m`
   - Intro price: `helium_3m_75`, `plus_2tb_85`
   - YouTube add-on: `yt_1m`, `yt_family`, `yt_lite`
-- **Pro (8 paket)**:
+- **Pro (9 paket)**:
   - Pro 5TB trial: `pro_12m`, `pro_6m`, `pro_6m_2`, `pro_6m_ss`, `pro_play_3m`
-  - Pro 5TB / 10TB intro price: `pro_3m_75`, `pro10_1m_90`, `pro10_3m_85`
-- **Ultra 5x – 20TB (4 paket)**: `ultra20_1m_eft`, `ultra20_3m_90`, `ultra20_3m_80`, `ultra20_3m_75`
-- **Ultra 20x – 30TB (6 paket)**: `ultra_1m_eft`, `ultra_1m_90`, `ultra_1m_75`, `ultra_3m_90`, `ultra_3m_80`, `ultra_3m_75`
+  - Pro 5TB / 10TB intro & base: `pro_3m_75`, `pro10_1m_90`, `pro10_3m_85`, `pro10_base`
+- **Ultra 5x – 20TB (5 paket)**: `ultra20_1m_eft`, `ultra20_3m_90`, `ultra20_3m_80`, `ultra20_3m_75`, `ultra20_base`
+- **Ultra 20x – 30TB (7 paket)**: `ultra_1m_eft`, `ultra_1m_90`, `ultra_1m_75`, `ultra_3m_90`, `ultra_3m_80`, `ultra_3m_75`, `ultra_30tb`
 
 </details>
 
@@ -169,7 +169,7 @@ Katalog dikelola terpusat di [plans.json](plans.json) dan otomatis disinkronkan 
 |---|---|
 | `main.py` | Entrypoint CLI, deteksi ADB/device, manajemen sesi Frida, loop, dan auto-remove akun |
 | `frida.js` | Payload Frida untuk inisialisasi `BillingClient`, query offer, check subs, dan `launchBillingFlow` |
-| `plans.json` | Konfigurasi grup dan 30 SKU/offer Google One |
+| `plans.json` | Konfigurasi grup dan 33 SKU/offer Google One |
 | `module_b64.py` | Payload base64 `BillingClient 5.2.1` (`module_521.apk`) |
 | `tests/test_main.py` | Unit test (`unittest`) untuk katalog, deduplikasi ADB, pengecekan `library.db`, state sesi, dan audit logger |
 | `requirements.txt` | Dependensi Python (`frida`, `frida-tools`) |
