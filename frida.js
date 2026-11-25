@@ -115,7 +115,10 @@ function getActivity() {
 function planOf(name) {
   var p = PLANS[name];
   if (!p) return null;
-  return { name: name, sku: p.sku, offer: p.offer, note: p.note };
+  var fb = [];
+  if (typeof p.fallback === "string" && p.fallback) fb = [p.fallback];
+  else if (Array.isArray(p.fallback)) fb = p.fallback;
+  return { name: name, sku: p.sku, offer: p.offer, note: p.note, fallback: fb };
 }
 
 function isG1Sub(prods) {
@@ -463,34 +466,84 @@ function queryProductDetailsForSkus(skus, cb) {
   return arr.size();
 }
 
+function formatOfferPrice(o) {
+  try {
+    var PricingPhase = Java.use("com.android.billingclient.api.ProductDetails$PricingPhase");
+    var phases = o.getPricingPhases().getPricingPhaseList();
+    var parts = [];
+    for (var p = 0; p < phases.size(); p++) {
+      var ph = Java.cast(phases.get(p), PricingPhase);
+      parts.push(String(ph.getFormattedPrice()));
+    }
+    return parts.join(" -> ");
+  } catch (ep) {
+    return "";
+  }
+}
+
+function collectProductDetails(list) {
+  var items = [];
+  var byKey = {};
+  if (!list) return { items: items, byKey: byKey };
+  L(dexLoader);
+  var PD = Java.use("com.android.billingclient.api.ProductDetails");
+  var SOD = Java.use("com.android.billingclient.api.ProductDetails$SubscriptionOfferDetails");
+  for (var i = 0; i < list.size(); i++) {
+    var pd = Java.cast(list.get(i), PD);
+    var pid = String(pd.getProductId());
+    var title = String(pd.getTitle() || "");
+    var offs = pd.getSubscriptionOfferDetails();
+    if (!offs) continue;
+    for (var j = 0; j < offs.size(); j++) {
+      var o = Java.cast(offs.get(j), SOD);
+      var oid = String(o.getOfferId() || "");
+      var price = formatOfferPrice(o);
+      var key = pid + "|" + oid;
+      byKey[key] = { pd: pd, offerObj: o };
+      items.push({ sku: pid, offer: oid, title: title, price: price });
+    }
+  }
+  return { items: items, byKey: byKey };
+}
+
 function queryOfferThen(spec, oldTok) {
   var addon = ADDON && PLANS[ADDON] ? PLANS[ADDON] : null;
-  var skus = addon ? [spec.sku, addon.sku] : [spec.sku];
+  var fbSpecs = [];
+  for (var f = 0; f < (spec.fallback || []).length; f++) {
+    var fs = planOf(spec.fallback[f]);
+    if (fs) fbSpecs.push(fs);
+  }
+  var skus = [spec.sku];
+  for (var k = 0; k < fbSpecs.length; k++) skus.push(fbSpecs[k].sku);
+  if (addon) skus.push(addon.sku);
+
   var count = queryProductDetailsForSkus(skus, function (res, list) {
-    log("pd", { code: res.getResponseCode(), n: list ? list.size() : 0, msg: String(res.getDebugMessage() || "") });
-    if (res.getResponseCode() !== 0 || !list) { log("done", {}); return; }
-    L(dexLoader);
-    var PD = Java.use("com.android.billingclient.api.ProductDetails");
-    var SOD = Java.use("com.android.billingclient.api.ProductDetails$SubscriptionOfferDetails");
-    var hit = null, hitOffer = null, add = null, addOffer = null;
-    for (var i = 0; i < list.size(); i++) {
-      var pd = Java.cast(list.get(i), PD);
-      var pid = String(pd.getProductId());
-      log("product", { id: pid, title: String(pd.getTitle() || "") });
-      var offs = pd.getSubscriptionOfferDetails();
-      if (!offs) continue;
-      for (var j = 0; j < offs.size(); j++) {
-        var o = Java.cast(offs.get(j), SOD);
-        var oid = String(o.getOfferId() || "");
-        log("offer", { product: pid, offerId: oid, token: String(o.getOfferToken() || "").slice(0, 12) + "..." });
-        if (pid === spec.sku && oid === spec.offer) { hit = pd; hitOffer = o; }
-        if (addon && pid === addon.sku && oid === addon.offer) { add = pd; addOffer = o; }
+    var rcode = res.getResponseCode();
+    log("pd", { code: rcode, n: list ? list.size() : 0, msg: String(res.getDebugMessage() || "") });
+    if (rcode !== 0 || !list) { log("done", {}); return; }
+    var parsed = collectProductDetails(list);
+    if (parsed.items.length > 0) {
+      log("sku_seen", { source: "query_offer", n: parsed.items.length, items: JSON.stringify(parsed.items) });
+    }
+    var chosen = spec;
+    var pair = parsed.byKey[spec.sku + "|" + spec.offer];
+    if (!pair) {
+      for (var fi = 0; fi < fbSpecs.length; fi++) {
+        var fb = fbSpecs[fi];
+        var fbPair = parsed.byKey[fb.sku + "|" + fb.offer];
+        if (fbPair) {
+          pair = fbPair;
+          chosen = fb;
+          log("fallback_hit", { from: spec.name, to: fb.name, sku: fb.sku, offer: fb.offer });
+          break;
+        }
       }
     }
-    if (!hit || !hitOffer) { log("no_offer", { sku: spec.sku, offer: spec.offer, target: spec.name }); return; }
-    if (ADDON && (!add || !addOffer)) log("no_addon", { addon: ADDON });
-    if (oldTok) log("stack_start", { src: "old_token", sku: spec.sku, offer: spec.offer });
-    launchFlow(hit, hitOffer, add, addOffer, oldTok || "", spec);
+    if (!pair) { log("no_offer", { sku: spec.sku, offer: spec.offer, target: spec.name }); return; }
+    var addPair = addon ? parsed.byKey[addon.sku + "|" + addon.offer] : null;
+    if (ADDON && !addPair) log("no_addon", { addon: ADDON });
+    if (oldTok) log("stack_start", { src: "old_token", sku: chosen.sku, offer: chosen.offer });
+    launchFlow(pair.pd, pair.offerObj, addPair ? addPair.pd : null, addPair ? addPair.offerObj : null, oldTok || "", chosen);
   });
   log("query_sent", { n: count, sku: spec.sku, offer: spec.offer });
 }
@@ -504,32 +557,9 @@ function checkOffersNow() {
   for (var k in PLANS) skus.push(PLANS[k].sku);
   queryProductDetailsForSkus(skus, function (res, list) {
     var code = res.getResponseCode();
-    var items = [];
-    if (code === 0 && list) {
-      L(dexLoader);
-      var PD = Java.use("com.android.billingclient.api.ProductDetails");
-      var SOD = Java.use("com.android.billingclient.api.ProductDetails$SubscriptionOfferDetails");
-      for (var i = 0; i < list.size(); i++) {
-        var pd = Java.cast(list.get(i), PD);
-        var pid = String(pd.getProductId());
-        var title = String(pd.getTitle() || "");
-        var offs = pd.getSubscriptionOfferDetails();
-        if (!offs) continue;
-        for (var j = 0; j < offs.size(); j++) {
-          var o = Java.cast(offs.get(j), SOD);
-          var oid = String(o.getOfferId() || "");
-          var price = "";
-          try {
-            var phases = o.getPricingPhases().getPricingPhaseList();
-            var parts = [];
-            for (var p = 0; p < phases.size(); p++) {
-              parts.push(String(phases.get(p).getFormattedPrice()));
-            }
-            price = parts.join(" -> ");
-          } catch (ep) {}
-          items.push({ sku: pid, offer: oid, title: title, price: price });
-        }
-      }
+    var items = code === 0 && list ? collectProductDetails(list).items : [];
+    if (items.length > 0) {
+      log("sku_seen", { source: "check_offers", n: items.length, items: JSON.stringify(items) });
     }
     log("offers_audit", { code: code, n: items.length, items: JSON.stringify(items) });
   });

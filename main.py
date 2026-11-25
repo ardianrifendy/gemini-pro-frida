@@ -33,6 +33,8 @@ REPO = HERE.parent
 BIN = REPO / "bin"
 JS_PATH = HERE / "frida.js"
 PLANS_PATH = HERE / "plans.json"
+SCAN_PATH = HERE / "sku_scan.json"
+REPORT_PATH = HERE / "g1-sku-report.html"
 
 PKG = "com.google.android.apps.subscriptions.red"
 ACT = PKG + "/com.google.android.apps.subscriptions.red.main.MainActivity"
@@ -335,6 +337,7 @@ def print_menu(plans, stack, addon, auto_remove=False, groups_cfg=GROUPS):
     print("  r  切换支付成功后自动移除 Google 账号")
     print("  p  循环处理设备上所有 Google 账号（已订阅则删号跳下一个）")
     print("  o  检查所有套餐 Offer 可用性与价格")
+    print("  h  生成本地 SKU 扫描与映射 HTML 报告")
     print("  x  立即移除设备上的 Google 账号")
     print("  e  检测并补齐环境")
     print("  g  重启 Google One 并重新注入")
@@ -917,9 +920,216 @@ class AuditLogger:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+class SkuScanner:
+    """Persist observed Play Billing SKU/offer pairs (adapted from g1-acq)."""
+
+    LIMIT = 300
+    RECENT_LIMIT = 10
+
+    def __init__(self, path=SCAN_PATH, plans=None):
+        self.path = Path(path) if path else None
+        self.known_pairs = {
+            (spec.get("sku", ""), spec.get("offer", ""))
+            for spec in (plans or {}).values()
+        }
+
+    def load(self):
+        if self.path and self.path.is_file():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("schemaVersion") == 1:
+                    return data
+            except Exception:
+                pass
+        return {
+            "schemaVersion": 1,
+            "updatedAt": "",
+            "scannedResponses": 0,
+            "matchedResponses": 0,
+            "limit": self.LIMIT,
+            "truncated": False,
+            "recentEvents": [],
+            "skus": [],
+        }
+
+    def clear(self):
+        state = {
+            "schemaVersion": 1,
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "scannedResponses": 0,
+            "matchedResponses": 0,
+            "limit": self.LIMIT,
+            "truncated": False,
+            "recentEvents": [],
+            "skus": [],
+        }
+        if self.path:
+            self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return state
+
+    def record(self, items, source="query"):
+        state = self.load()
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        by_key = {}
+        order = []
+        for row in state.get("skus", [])[:self.LIMIT]:
+            key = f"{row.get('sku', '')}|{row.get('offer', '')}"
+            if key in by_key or not row.get("sku"):
+                continue
+            by_key[key] = dict(row)
+            order.append(key)
+
+        added = 0
+        omitted = 0
+        seen_in_batch = set()
+        truncated = bool(state.get("truncated"))
+        for it in items or []:
+            sku = str(it.get("sku") or "").strip()
+            offer = str(it.get("offer") or "").strip()
+            if not sku:
+                continue
+            key = f"{sku}|{offer}"
+            in_plans = (sku, offer) in self.known_pairs
+            if key not in by_key:
+                if len(order) >= self.LIMIT:
+                    truncated = True
+                    if key not in seen_in_batch:
+                        omitted += 1
+                    seen_in_batch.add(key)
+                    continue
+                by_key[key] = {
+                    "sku": sku,
+                    "offer": offer,
+                    "title": str(it.get("title") or ""),
+                    "price": str(it.get("price") or ""),
+                    "in_plans": in_plans,
+                    "count": 0,
+                    "firstSeen": now,
+                    "lastSeen": now,
+                }
+                order.append(key)
+                added += 1
+            seen_in_batch.add(key)
+            entry = by_key[key]
+            entry["count"] = int(entry.get("count", 0)) + 1
+            entry["lastSeen"] = now
+            entry["in_plans"] = in_plans
+            if it.get("title"):
+                entry["title"] = str(it.get("title"))
+            if it.get("price"):
+                entry["price"] = str(it.get("price"))
+
+        events = list(state.get("recentEvents", []))[-self.RECENT_LIMIT:]
+        events.append({
+            "at": now,
+            "source": source,
+            "candidates": len(seen_in_batch),
+            "added": added,
+            "omitted": omitted,
+        })
+        state["updatedAt"] = now
+        state["scannedResponses"] = int(state.get("scannedResponses", 0)) + 1
+        state["matchedResponses"] = int(state.get("matchedResponses", 0)) + (1 if seen_in_batch else 0)
+        state["truncated"] = truncated
+        state["recentEvents"] = events[-self.RECENT_LIMIT:]
+        state["skus"] = [by_key[k] for k in sorted(order)]
+        if self.path:
+            self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        return state
+
+
+def render_sku_report_html(state, plans=None, out_path=REPORT_PATH):
+    """Render a standalone interactive HTML report (inspired by g1-acq/g1-sku-report.js)."""
+    import html as _html
+    skus = state.get("skus", [])
+    new_count = sum(1 for s in skus if not s.get("in_plans"))
+    events = list(reversed(state.get("recentEvents", [])))
+    fallback_rows = [
+        (pid, ", ".join(spec["fallback"] if isinstance(spec["fallback"], list) else [spec["fallback"]]))
+        for pid, spec in (plans or {}).items()
+        if spec.get("fallback")
+    ]
+    rows_html = "\n".join(
+        "<tr>"
+        f"<td><code>{_html.escape(s.get('sku', ''))}</code></td>"
+        f"<td><code>{_html.escape(s.get('offer', '') or '-')}</code></td>"
+        f"<td>{_html.escape(s.get('price', '') or '-')}</td>"
+        f"<td>{'<span class=\"badge known\">KNOWN</span>' if s.get('in_plans') else '<span class=\"badge new\">NEW</span>'}</td>"
+        f"<td>{int(s.get('count', 0))}</td>"
+        f"<td>{_html.escape(s.get('lastSeen', ''))}</td>"
+        "</tr>"
+        for s in skus
+    )
+    events_html = "\n".join(
+        "<tr>"
+        f"<td>{_html.escape(e.get('at', ''))}</td>"
+        f"<td>{_html.escape(e.get('source', ''))}</td>"
+        f"<td>{int(e.get('candidates', 0))}</td>"
+        f"<td>{int(e.get('added', 0))}</td>"
+        f"<td>{int(e.get('omitted', 0))}</td>"
+        "</tr>"
+        for e in events
+    )
+    fb_html = "\n".join(
+        f"<tr><td><code>{_html.escape(pid)}</code></td><td><code>{_html.escape(fb)}</code></td></tr>"
+        for pid, fb in fallback_rows
+    )
+    json_blob = json.dumps(state, ensure_ascii=False, indent=2).replace("</", "<\\/")
+    doc = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Google One SKU &amp; Offer Report</title>
+<style>
+body{{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}}
+.wrap{{max-width:1100px;margin:0 auto}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:16px 0}}
+.card{{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px}}
+.card b{{display:block;font-size:24px;margin-top:4px;color:#38bdf8}}
+.bar{{display:flex;gap:10px;align-items:center;margin:16px 0;flex-wrap:wrap}}
+input{{flex:1;min-width:220px;padding:9px 12px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#f8fafc}}
+button{{padding:9px 14px;border-radius:8px;border:0;background:#0284c7;color:#fff;cursor:pointer;font-weight:600}}
+table{{width:100%;border-collapse:collapse;background:#1e293b;border-radius:10px;overflow:hidden;margin-bottom:24px}}
+th,td{{padding:9px 12px;border-bottom:1px solid #334155;text-align:left;font-size:13px}}
+th{{background:#0f172a;color:#94a3b8}}
+.badge{{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}}
+.known{{background:#14532d;color:#86efac}} .new{{background:#7c2d12;color:#fdba74}}
+code{{color:#bae6fd}}
+</style></head><body><div class="wrap">
+<h1>Google One Play Billing SKU &amp; Offer Report</h1>
+<p>Updated: {_html.escape(state.get('updatedAt') or 'never')}</p>
+<div class="cards">
+  <div class="card">Observed Offers<b>{len(skus)}</b></div>
+  <div class="card">New (Not in plans.json)<b>{new_count}</b></div>
+  <div class="card">Scanned Responses<b>{int(state.get('scannedResponses', 0))}</b></div>
+  <div class="card">Matched Responses<b>{int(state.get('matchedResponses', 0))}</b></div>
+</div>
+<div class="bar">
+  <input id="q" placeholder="Filter by SKU, offerId, price, or NEW/KNOWN..." oninput="filterRows()">
+  <button onclick="exportJson()">Export JSON</button>
+</div>
+<h2>Observed SKUs &amp; Offers</h2>
+<table id="tbl"><thead><tr><th>SKU</th><th>Offer ID</th><th>Price</th><th>Catalog</th><th>Hits</th><th>Last Seen</th></tr></thead>
+<tbody>{rows_html or '<tr><td colspan="6">No SKUs recorded yet. Run --check-offers or select a plan first.</td></tr>'}</tbody></table>
+<h2>Recent Scan Events (Latest 10)</h2>
+<table><thead><tr><th>Time (UTC)</th><th>Source</th><th>Candidates</th><th>Added</th><th>Omitted</th></tr></thead>
+<tbody>{events_html or '<tr><td colspan="5">No events recorded yet.</td></tr>'}</tbody></table>
+<h2>Configured Fallback Rules</h2>
+<table><thead><tr><th>Primary Plan</th><th>Fallback Chain</th></tr></thead>
+<tbody>{fb_html or '<tr><td colspan="2">None</td></tr>'}</tbody></table>
+</div>
+<script id="raw" type="application/json">{json_blob}</script>
+<script>
+function filterRows(){{var q=document.getElementById('q').value.toLowerCase();var trs=document.querySelectorAll('#tbl tbody tr');trs.forEach(function(r){{r.style.display=r.textContent.toLowerCase().indexOf(q)>=0?'':'none';}});}}
+function exportJson(){{var blob=new Blob([document.getElementById('raw').textContent],{{type:'application/json'}});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='g1-sku-report.json';a.click();}}
+</script></body></html>"""
+    out = Path(out_path)
+    out.write_text(doc, encoding="utf-8")
+    return out
+
+
 class Session:
-    def __init__(self, plans=None):
+    def __init__(self, plans=None, scanner=None):
         self.plans = plans
+        self.scanner = scanner
         self.device = None
         self.session = None
         self.script = None
@@ -967,6 +1177,14 @@ class Session:
             except Exception:
                 self.offers_audit = []
             self.offers_checked.set()
+            return
+        if ev == "sku_seen":
+            try:
+                seen_items = json.loads(payload.get("items") or "[]")
+                if self.scanner and seen_items:
+                    self.scanner.record(seen_items, source=payload.get("source") or "frida")
+            except Exception:
+                pass
             return
         bits = [ev] if ev else []
         for k, v in payload.items():
@@ -1190,6 +1408,10 @@ def parse_args():
                    help="按顺序循环处理设备上所有已登录的 Google 账号（已订阅直接删号跳下一个）")
     p.add_argument("--check-offers", action="store_true",
                    help="仅检查所有套餐 Offer 的可用性与价格，不弹出收银台")
+    p.add_argument("--report-html", nargs="?", const=str(REPORT_PATH), default="",
+                   help="导出本机 SKU/Offer 扫描与回退映射 HTML 报告（默认 g1-sku-report.html）")
+    p.add_argument("--clear-scan", action="store_true",
+                   help="清空本地 SKU 扫描记录 (sku_scan.json) 并退出")
     p.add_argument("--log-file", default="",
                    help="将每次操作结果写入指定 JSONL 日志文件")
     p.add_argument("--remove-accounts", action="store_true",
@@ -1233,6 +1455,16 @@ def main():
     if not plans:
         fail("未能加载套餐列表 (plans.json / frida.js)")
         sys.exit(1)
+
+    scanner = SkuScanner(SCAN_PATH, plans=plans)
+    if args.clear_scan:
+        scanner.clear()
+        ok(f"已清空本地 SKU 扫描记录: {SCAN_PATH}")
+        return
+    if args.report_html and not (args.check_offers or args.plan or args.stack_plans or args.loop):
+        out = render_sku_report_html(scanner.load(), plans=plans, out_path=args.report_html)
+        ok(f"已生成 HTML 报告: {out}")
+        return
 
     ensure_env()
     if args.remove_accounts:
@@ -1372,7 +1604,7 @@ def main():
                 remove_and_advance(None, current)
                 continue
             if sess is None:
-                sess = Session(plans=plans)
+                sess = Session(plans=plans, scanner=scanner)
                 pid = start_google_one()
                 sess.attach(pid)
             if not is_chain and not stack and sess.check_subs():
@@ -1440,11 +1672,14 @@ def main():
         return sess
 
     if args.check_offers:
-        sess = Session(plans=plans)
+        sess = Session(plans=plans, scanner=scanner)
         pid = start_google_one()
         sess.attach(pid)
         items = sess.check_offers(plans)
         audit.write(account=",".join(google_accounts()), action="check_offers", offers_found=len(items))
+        if args.report_html:
+            out = render_sku_report_html(scanner.load(), plans=plans, out_path=args.report_html)
+            ok(f"已生成 HTML 报告: {out}")
         sess.close()
         return
 
@@ -1475,7 +1710,7 @@ def main():
                 sess.close()
         return
 
-    sess = Session(plans=plans)
+    sess = Session(plans=plans, scanner=scanner)
     pid = start_google_one()
     sess.attach(pid)
 
@@ -1540,10 +1775,14 @@ def main():
                 continue
             if low == "o":
                 if sess is None:
-                    sess = Session(plans=plans)
+                    sess = Session(plans=plans, scanner=scanner)
                     pid = start_google_one()
                     sess.attach(pid)
                 sess.check_offers(plans)
+                continue
+            if low == "h":
+                out = render_sku_report_html(scanner.load(), plans=plans)
+                ok(f"已生成 HTML 报告: {out}")
                 continue
             if low == "t":
                 try:
@@ -1555,7 +1794,7 @@ def main():
                     warn(f"无法识别套餐: {bad_item or raw_chain}")
                     continue
                 if sess is None:
-                    sess = Session(plans=plans)
+                    sess = Session(plans=plans, scanner=scanner)
                     pid = start_google_one()
                     sess.attach(pid)
                 acct = (google_accounts() or [""])[0]
@@ -1580,7 +1819,7 @@ def main():
                     continue
                 sess = run_loop(loop_plans, initial_sess=sess)
                 if sess is None and google_accounts():
-                    sess = Session(plans=plans)
+                    sess = Session(plans=plans, scanner=scanner)
                     pid = start_google_one()
                     sess.attach(pid)
                 continue
@@ -1594,7 +1833,7 @@ def main():
                 if sess:
                     sess.close()
                 pid = start_google_one()
-                sess = Session(plans=plans)
+                sess = Session(plans=plans, scanner=scanner)
                 sess.attach(pid)
                 continue
             plan_id = index.get(raw) or index.get(low)
@@ -1602,7 +1841,7 @@ def main():
                 warn("无法识别输入。输入编号、套餐名，或 q 退出。")
                 continue
             if sess is None:
-                sess = Session(plans=plans)
+                sess = Session(plans=plans, scanner=scanner)
                 pid = start_google_one()
                 sess.attach(pid)
             spec = plans[plan_id]

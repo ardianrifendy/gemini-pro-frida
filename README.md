@@ -16,6 +16,8 @@ Alat otomasi berbasis **Python + Frida** untuk menguji alur *Google Play Billing
   - Jika akun terdeteksi sudah berlangganan (`library.db` atau live `queryPurchasesAsync`), akun langsung dihapus dan lanjut ke akun berikutnya.
   - Jika belum berlangganan, memunculkan layar checkout, menunggu pembayaran sukses, menghapus akun, lalu lanjut ke akun selanjutnya.
 - **Audit Offer Tanpa Checkout (`--check-offers`)** — Mengecek ketersediaan SKU, `offerId`, dan harga dari Play Store dalam satu tabel ringkas tanpa memunculkan popup pembayaran.
+- **Fallback Offer Otomatis (`plans.json`)** — Jika offer utama tidak tersedia (`MISS`), skrip otomatis mencoba daftar fallback yang dikonfigurasi pada paket tersebut.
+- **SKU Discovery & Laporan HTML Lokal (`--report-html`)** — Mengumpulkan seluruh SKU/offer `g1.*` yang terlihat dari Play Billing hingga 300 entri unik (`sku_scan.json`, 10 event terbaru) dan mengekspor laporan HTML interaktif + JSON (diadaptasi dari pola `crhywun/g1-acq`).
 - **Structured Audit Log (`--log-file`)** — Menyimpan log per langkah dalam format **JSONL** untuk keperluan QA dan pelacakan hasil.
 
 ---
@@ -93,6 +95,8 @@ python main.py --check-offers
 | `--addon <id>` | - | Menggabungkan add-on YouTube (`yt_1m`, `yt_family`, `yt_lite`) |
 | `--loop` | `false` | Memproses semua akun Google yang login di perangkat secara berurutan |
 | `--check-offers` | `false` | Mengecek ketersediaan semua SKU/offer dan harganya tanpa checkout |
+| `--report-html [path]` | `g1-sku-report.html` | Menghasilkan laporan HTML lokal & tombol ekspor JSON dari `sku_scan.json` |
+| `--clear-scan` | `false` | Menghapus riwayat `sku_scan.json` |
 | `--log-file <path>` | - | Menulis log terstruktur ke file `.jsonl` |
 | `--wait-payment <detik>` | `300.0` | Batas waktu menunggu konfirmasi pembayaran user |
 | `--auto-remove` | `false` | Otomatis menghapus akun Google setelah pembayaran sukses (`code=0`) |
@@ -131,6 +135,7 @@ python main.py --remove-accounts
 | `r` | Toggle **Auto-Remove akun** setelah pembayaran sukses |
 | `p` | Memulai mode **Loop** untuk semua akun Google di perangkat |
 | `o` | Menjalankan **Offer Audit** (`--check-offers`) dari dalam menu |
+| `h` | Membuat laporan HTML lokal (`g1-sku-report.html`) beserta ekspor JSON |
 | `x` | Menghapus seluruh akun Google yang sedang login sekarang juga |
 | `e` | Menjalankan ulang pengecekan environment & perangkat |
 | `g` | Me-restart aplikasi Google One dan menyuntikkan ulang Frida |

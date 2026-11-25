@@ -102,6 +102,33 @@ class TestSessionStateAndLogging(unittest.TestCase):
                     code = sess.wait_for_purchase(timeout=10.0, account="a@gmail.com", baseline=())
         self.assertEqual(code, "0")
 
+
+class TestSkuScannerAndReport(unittest.TestCase):
+    def test_scanner_records_dedupes_limits_and_renders_html(self):
+        plans, _ = main.load_catalog()
+        with tempfile.TemporaryDirectory() as tmp:
+            scan_path = Path(tmp) / "sku_scan.json"
+            html_path = Path(tmp) / "report.html"
+            scanner = main.SkuScanner(scan_path, plans=plans)
+            state = scanner.record([
+                {"sku": "g1.2tb.ai.subs_variant", "offer": "12months-eft", "title": "Pro 5TB", "price": "Free -> Rp 300.000"},
+                {"sku": "g1.unknown.sku", "offer": "promo-1", "title": "Unknown", "price": "Rp 10.000"},
+            ], source="check_offers")
+            self.assertEqual(state["scannedResponses"], 1)
+            self.assertEqual(state["matchedResponses"], 1)
+            self.assertEqual(len(state["skus"]), 2)
+            by_sku = {r["sku"]: r for r in state["skus"]}
+            self.assertTrue(by_sku["g1.2tb.ai.subs_variant"]["in_plans"])
+            self.assertFalse(by_sku["g1.unknown.sku"]["in_plans"])
+
+            out_html = main.render_sku_report_html(state, plans=plans, out_path=html_path)
+            content = out_html.read_text(encoding="utf-8")
+            self.assertIn("g1.unknown.sku", content)
+            self.assertIn("Export JSON", content)
+
+            cleared = scanner.clear()
+            self.assertEqual(cleared["skus"], [])
+
     def test_audit_logger_writes_jsonl(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "audit.jsonl"

@@ -9,6 +9,8 @@ __pycache__/
 .venv/
 venv/
 
-# Generated audit logs
+# Generated audit logs & local SKU scan reports
 *.jsonl
+sku_scan.json
+g1-sku-report.html
 logs/
