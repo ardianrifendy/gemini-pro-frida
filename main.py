@@ -734,6 +734,23 @@ def db_sub_snapshot(email):
     return tuple(sorted(rows))
 
 
+def latest_db_token(snapshot):
+    """Pick the most recent valid purchaseToken from a db_sub_snapshot tuple."""
+    best_tok = ""
+    best_until = -1
+    for _doc, until, tok in snapshot or ():
+        if not tok:
+            continue
+        try:
+            u = int(until) if until else 0
+        except ValueError:
+            u = 0
+        if u >= best_until:
+            best_until = u
+            best_tok = tok
+    return best_tok
+
+
 def db_has_g1_sub(email):
     """Check Play Store library.db for an active Google One subscription on email."""
     safe_email = email.replace("'", "''")
@@ -1020,7 +1037,7 @@ class Session:
             return sc.exports_sync
         return sc.exports
 
-    def buy(self, plan_id, stack=False, addon=""):
+    def buy(self, plan_id, stack=False, addon="", old_token=""):
         self.launched_ok.clear()
         self.launch_failed.clear()
         self.purchase_done.clear()
@@ -1046,13 +1063,14 @@ class Session:
 
         try:
             rpc(("set_addon", "setAddon"), addon or "", required=False)
+            rpc(("set_old_token", "setOldToken"), old_token or "", required=False)
             ret = rpc(("stack",) if stack else ("buy",), plan_id)
             info(ret)
         except Exception as e:
             warn(f"rpc 调用失败，改用 post: {e}")
             self.script.post({
                 "type": "cfg",
-                "payload": {"target": plan_id, "stack": stack, "addon": addon},
+                "payload": {"target": plan_id, "stack": stack, "addon": addon, "oldToken": old_token},
             })
 
     def check_subs(self, timeout=8.0):
@@ -1292,7 +1310,8 @@ def main():
             info(f"叠加步骤 [{idx}/{total_steps}] 账号={account}  套餐={pid_name}  模式={'叠加(mode=5)' if use_stack else '首单新购'}")
             info(spec["note"])
             baseline = db_sub_snapshot(account)
-            sess.buy(pid_name, stack=use_stack, addon=addon)
+            old_tok = latest_db_token(baseline) if use_stack else ""
+            sess.buy(pid_name, stack=use_stack, addon=addon, old_token=old_tok)
             info(f"等待 {account} 完成第 {idx}/{total_steps} 笔支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
             code = sess.wait_for_purchase(timeout=args.wait_payment, account=account, baseline=baseline)
             if code == "0":
@@ -1380,7 +1399,8 @@ def main():
                 info(f"{'续费叠加' if stack else '新购'} {single_pid}  sku={spec['sku']}  offer={spec['offer']}")
                 info(spec["note"])
                 baseline = db_sub_snapshot(current)
-                sess.buy(single_pid, stack=stack, addon=addon)
+                old_tok = latest_db_token(baseline) if stack else ""
+                sess.buy(single_pid, stack=stack, addon=addon, old_token=old_tok)
                 info(f"等待 {current} 完成支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
                 code = sess.wait_for_purchase(timeout=args.wait_payment, account=current, baseline=baseline)
                 if code == "0":
@@ -1480,9 +1500,10 @@ def main():
         spec = plans[plan_id]
         acct = (google_accounts() or [""])[0]
         baseline = db_sub_snapshot(acct)
+        old_tok = latest_db_token(baseline) if stack else ""
         info(f"{'续费叠加' if stack else '新购'} {plan_id}  sku={spec['sku']}  offer={spec['offer']}")
         info(spec["note"])
-        sess.buy(plan_id, stack=stack, addon=addon)
+        sess.buy(plan_id, stack=stack, addon=addon, old_token=old_tok)
         try:
             handle_post_buy(sess, plan_id, spec, account=acct, baseline=baseline)
         except KeyboardInterrupt:
@@ -1587,9 +1608,10 @@ def main():
             spec = plans[plan_id]
             acct = (google_accounts() or [""])[0]
             baseline = db_sub_snapshot(acct)
+            old_tok = latest_db_token(baseline) if stack else ""
             info(f"{'续费叠加' if stack else '新购'} {plan_id}  sku={spec['sku']}  offer={spec['offer']}")
             info(spec["note"])
-            sess.buy(plan_id, stack=stack, addon=addon)
+            sess.buy(plan_id, stack=stack, addon=addon, old_token=old_tok)
             if auto_remove:
                 try:
                     handle_post_buy(sess, plan_id, spec, account=acct, baseline=baseline)

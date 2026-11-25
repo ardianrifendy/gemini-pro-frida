@@ -44,6 +44,7 @@ var ctxRef = null;
 var clientRef = null;
 var booted = false;
 var lastPurchaseToken = "";
+var manualOldToken = "";
 var held = [];
 var clsSeq = 0;
 function hold(x) { held.push(x); return x; }
@@ -390,6 +391,11 @@ function queryPurchasesAsyncList(cb) {
 
 function queryPurchasesThen(cb) {
   L(dexLoader);
+  if (manualOldToken) {
+    log("old_purchase", { i: 0, products: "host-db", head: manualOldToken.slice(0, 16) });
+    cb(manualOldToken);
+    return;
+  }
   var dbTok = tokenFromPlayDb();
   if (dbTok) {
     lastPurchaseToken = dbTok;
@@ -574,6 +580,10 @@ rpc.exports = {
     log("addon_set", { addon: ADDON });
     return ADDON;
   },
+  setOldToken: function (tok) {
+    manualOldToken = tok || "";
+    return manualOldToken ? manualOldToken.slice(0, 12) : "";
+  },
   buy: function (name) {
     var t = name || TARGET;
     onJava(function () { run(t, false); });
@@ -603,6 +613,7 @@ recv("cfg", function onCfg(msg) {
   TARGET = p.target || TARGET;
   STACK = !!p.stack;
   if (p.addon !== undefined) ADDON = p.addon || "";
+  if (p.oldToken !== undefined) manualOldToken = p.oldToken || "";
   onJava(function () { run(TARGET, STACK); });
   recv("cfg", onCfg);
 });
