@@ -92,6 +92,16 @@ class TestSessionStateAndLogging(unittest.TestCase):
         sess2._on_detached("process-terminated")
         self.assertEqual(sess2.wait_for_purchase(timeout=1.0), "detached")
 
+    def test_wait_for_purchase_detects_library_db_change(self):
+        sess = main.Session()
+        sess.launched_ok.set()
+        new_snap = (("subs:com.google.android.apps.subscriptions.red:g1.2tb.ai.subs_variant", "1827110821139", "tok2"),)
+        with mock.patch.object(main, "db_sub_snapshot", return_value=new_snap):
+            with mock.patch("time.monotonic", side_effect=[0.0, 0.0, 0.0, 3.0, 3.0]):
+                with mock.patch("time.sleep"):
+                    code = sess.wait_for_purchase(timeout=10.0, account="a@gmail.com", baseline=())
+        self.assertEqual(code, "0")
+
     def test_audit_logger_writes_jsonl(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "audit.jsonl"

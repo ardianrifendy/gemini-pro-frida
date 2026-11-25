@@ -707,6 +707,33 @@ def _embed_java_bridge(js, quiet=False):
     return js
 
 
+def db_sub_snapshot(email):
+    """Return sorted snapshot of (doc_id, subs_valid_until_time, purchase_token) for email in library.db."""
+    if not email:
+        return ()
+    safe_email = email.replace("'", "''")
+    sql = (
+        "select doc_id, subs_valid_until_time, inapp_purchase_data from ownership "
+        f"where account='{safe_email}' and (doc_id like '%g1.%' or doc_id like 'subs:com.google.android.apps.subscriptions.red:%');"
+    )
+    out = su_sh(f'sqlite3 /data/data/com.android.vending/databases/library.db "{sql}"')
+    if not out or "Error:" in out or "not found" in out.lower() or "inaccessible" in out.lower():
+        return ()
+    rows = []
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln or "|" not in ln:
+            continue
+        parts = ln.split("|", 2)
+        doc = parts[0].strip()
+        until = parts[1].strip() if len(parts) > 1 else ""
+        data = parts[2] if len(parts) > 2 else ""
+        m = re.search(r'"purchaseToken"\s*:\s*"([^"]+)"', data)
+        tok = m.group(1) if m else ""
+        rows.append((doc, until, tok))
+    return tuple(sorted(rows))
+
+
 def db_has_g1_sub(email):
     """Check Play Store library.db for an active Google One subscription on email."""
     safe_email = email.replace("'", "''")
@@ -1073,9 +1100,10 @@ class Session:
         print("-" * 76)
         return self.offers_audit
 
-    def wait_for_purchase(self, timeout=300.0):
-        """Wait for Play checkout completion callback, launch failure, or process detach."""
+    def wait_for_purchase(self, timeout=300.0, account=None, baseline=None):
+        """Wait for Play checkout completion via callback or library.db update."""
         deadline = time.monotonic() + max(timeout, 1.0)
+        next_db_poll = time.monotonic() + 2.0
         while time.monotonic() < deadline:
             if self.purchase_done.is_set():
                 with self.lock:
@@ -1084,6 +1112,13 @@ class Session:
                 return "detached"
             if self.launch_failed.is_set():
                 return None
+            now = time.monotonic()
+            if account and baseline is not None and self.launched_ok.is_set() and now >= next_db_poll:
+                next_db_poll = now + 2.0
+                cur = db_sub_snapshot(account)
+                if cur != baseline and len(cur) > 0:
+                    ok("检测到 Play Store 订阅记录更新，支付成功")
+                    return "0"
             time.sleep(0.3)
         return "timeout"
 
@@ -1200,7 +1235,7 @@ def main():
         adb.shell("am", "force-stop", "com.android.vending")
         time.sleep(1.0)
 
-    def handle_post_buy(sess, plan_id, spec, account="", target_emails=None):
+    def handle_post_buy(sess, plan_id, spec, account="", target_emails=None, baseline=None):
         if not auto_remove:
             time.sleep(max(args.wait, 1.0))
             audit.write(
@@ -1210,7 +1245,7 @@ def main():
             )
             return None
         info(f"等待设备端完成支付（超时 {int(args.wait_payment)}s，Ctrl+C 可取消等待）...")
-        code = sess.wait_for_purchase(timeout=args.wait_payment)
+        code = sess.wait_for_purchase(timeout=args.wait_payment, account=account, baseline=baseline)
         action = "kept"
         if code == "0":
             time.sleep(1.5)
@@ -1256,9 +1291,10 @@ def main():
             print()
             info(f"叠加步骤 [{idx}/{total_steps}] 账号={account}  套餐={pid_name}  模式={'叠加(mode=5)' if use_stack else '首单新购'}")
             info(spec["note"])
+            baseline = db_sub_snapshot(account)
             sess.buy(pid_name, stack=use_stack, addon=addon)
             info(f"等待 {account} 完成第 {idx}/{total_steps} 笔支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
-            code = sess.wait_for_purchase(timeout=args.wait_payment)
+            code = sess.wait_for_purchase(timeout=args.wait_payment, account=account, baseline=baseline)
             if code == "0":
                 paid_count += 1
                 has_sub = True
@@ -1343,9 +1379,10 @@ def main():
             else:
                 info(f"{'续费叠加' if stack else '新购'} {single_pid}  sku={spec['sku']}  offer={spec['offer']}")
                 info(spec["note"])
+                baseline = db_sub_snapshot(current)
                 sess.buy(single_pid, stack=stack, addon=addon)
                 info(f"等待 {current} 完成支付（超时 {int(args.wait_payment)}s，Ctrl+C 可中止）...")
-                code = sess.wait_for_purchase(timeout=args.wait_payment)
+                code = sess.wait_for_purchase(timeout=args.wait_payment, account=current, baseline=baseline)
                 if code == "0":
                     time.sleep(1.5)
                     dev = sess.device
@@ -1442,11 +1479,12 @@ def main():
             sys.exit(1)
         spec = plans[plan_id]
         acct = (google_accounts() or [""])[0]
+        baseline = db_sub_snapshot(acct)
         info(f"{'续费叠加' if stack else '新购'} {plan_id}  sku={spec['sku']}  offer={spec['offer']}")
         info(spec["note"])
         sess.buy(plan_id, stack=stack, addon=addon)
         try:
-            handle_post_buy(sess, plan_id, spec, account=acct)
+            handle_post_buy(sess, plan_id, spec, account=acct, baseline=baseline)
         except KeyboardInterrupt:
             print()
             warn("已取消等待支付")
@@ -1548,12 +1586,13 @@ def main():
                 sess.attach(pid)
             spec = plans[plan_id]
             acct = (google_accounts() or [""])[0]
+            baseline = db_sub_snapshot(acct)
             info(f"{'续费叠加' if stack else '新购'} {plan_id}  sku={spec['sku']}  offer={spec['offer']}")
             info(spec["note"])
             sess.buy(plan_id, stack=stack, addon=addon)
             if auto_remove:
                 try:
-                    handle_post_buy(sess, plan_id, spec, account=acct)
+                    handle_post_buy(sess, plan_id, spec, account=acct, baseline=baseline)
                 except KeyboardInterrupt:
                     print()
                     warn("已取消等待支付，返回菜单")
